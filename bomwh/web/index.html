@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>物料结构仓库 · 多层需求查询</title>
+<style>
+  :root { --bd:#d8dee4; --bg:#f6f8fa; --ink:#1f2328; --mut:#57606a; --acc:#0969da;
+          --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+         color:var(--ink); background:var(--bg); }
+  header { background:#fff; border-bottom:1px solid var(--bd); padding:12px 20px;
+           display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  #pubBanner { font-size:13px; color:var(--mut); }
+  #pubBanner b { color:var(--ok); }
+  main { max-width:1180px; margin:18px auto; padding:0 16px; display:grid; gap:14px; }
+  section { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:14px 16px; }
+  h2 { font-size:14px; margin:0 0 10px; }
+  h2 .hint { font-weight:normal; color:var(--mut); font-size:12px; margin-left:8px; }
+  label { font-size:13px; color:var(--mut); margin-right:4px; }
+  select,input { font:inherit; padding:4px 8px; border:1px solid var(--bd); border-radius:6px; }
+  button { font:inherit; padding:5px 12px; border:1px solid var(--bd); border-radius:6px;
+           background:#fff; cursor:pointer; }
+  button:hover { background:var(--bg); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.danger { color:var(--bad); border-color:var(--bad); }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin-top:8px; }
+  th,td { border:1px solid var(--bd); padding:4px 8px; text-align:left; vertical-align:top; }
+  th { background:var(--bg); font-weight:600; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; }
+  .badge { display:inline-block; padding:0 6px; border-radius:10px; font-size:11.5px;
+           border:1px solid; margin-right:4px; white-space:nowrap; }
+  .b-sub { color:var(--warn); border-color:var(--warn); }
+  .b-cyc { color:var(--bad); border-color:var(--bad); }
+  .b-slot { color:var(--acc); border-color:var(--acc); }
+  .st-published { color:var(--ok); font-weight:600; }
+  .st-building { color:var(--acc); font-weight:600; }
+  .st-stale,.st-aborted { color:var(--bad); }
+  .st-ready { color:var(--warn); }
+  .st-archived { color:var(--mut); }
+  .muted { color:var(--mut); }
+  .err { color:var(--bad); margin-top:8px; white-space:pre-wrap; }
+  .note { background:var(--bg); border:1px solid var(--bd); border-radius:6px;
+          padding:8px 10px; margin-top:8px; font-size:12.5px; display:none; }
+  .note ul { margin:4px 0; padding-left:18px; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:900px){ .cols { grid-template-columns:1fr; } }
+  details { margin-top:6px; }
+  summary { cursor:pointer; color:var(--acc); font-size:12.5px; }
+  .pathcell { white-space:nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>物料结构仓库 · 多层需求查询</h1>
+  <span id="pubBanner">加载中…</span>
+</header>
+<main>
+  <section>
+    <h2>需求查询<span class="hint">按“成品 + 日期”展开多层需求，含来源路径与数量连乘链</span></h2>
+    <div class="row">
+      <label>成品</label><select id="qProduct"></select>
+      <label>日期</label><input id="qDate" type="date" value="2026-03-01">
+      <label>数量</label><input id="qQty" type="number" value="10" min="0" step="any" style="width:90px">
+      <label><input id="qLive" type="checkbox"> 实时重算（绕过已发布快照）</label>
+      <button class="primary" onclick="doQuery()">展开查询</button>
+    </div>
+    <div id="qMeta" class="muted" style="margin-top:6px"></div>
+    <div id="qErr" class="err"></div>
+    <div class="cols">
+      <div>
+        <h2 style="margin-top:10px">按物料汇总</h2>
+        <table id="totalsTbl"><thead><tr>
+          <th>物料</th><th>名称</th><th>需求总量</th><th>路径数</th><th>标记</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+      <div>
+        <h2 style="margin-top:10px">逐路径明细（来源路径）</h2>
+        <table id="rowsTbl"><thead><tr>
+          <th>路径</th><th>数量链</th><th>需求数量</th><th>来源边</th><th>标记</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>批次接入<span class="hint">原始接入：结构、更正、替代优先级、需求按批次到达</span></h2>
+    <div class="row" id="ingestBtns"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="danger" onclick="doReset()">清空仓库</button>
+      <span id="ingestMsg" class="muted"></span>
+    </div>
+    <table id="batchTbl"><thead><tr>
+      <th>批次</th><th>标签</th><th>到达时间</th><th>新增结构</th><th>更正</th><th>替代</th><th>需求</th>
+    </tr></thead><tbody></tbody></table>
+  </section>
+
+  <section>
+    <h2>构建与发布<span class="hint">变更分类 → 增量/局部/全量决策 → 原子发布；重叠构建旧者不得回退</span></h2>
+    <div class="row">
+      <label>模式</label>
+      <select id="bMode"><option value="auto">auto（按变更分类决策）</option><option value="full">full（强制全量）</option></select>
+      <label>每需求对延时(秒)</label><input id="bSlow" type="number" value="0" min="0" max="5" step="0.1" style="width:70px">
+      <button class="primary" onclick="doBuild()">触发构建</button>
+      <button class="danger" onclick="doAbort()">中止进行中的构建</button>
+      <span id="buildMsg" class="muted"></span>
+    </div>
+    <table id="snapTbl"><thead><tr>
+      <th>快照</th><th>版本</th><th>状态</th><th>模式</th><th>基线批次</th><th>开始</th><th>结束</th><th>决策说明</th>
+    </tr></thead><tbody></tbody></table>
+    <div id="snapNote" class="note"></div>
+  </section>
+
+  <section>
+    <h2>结构版本（当前视图）<span class="hint">含更正链与生效区间；被取代版本灰显</span></h2>
+    <table id="edgeTbl"><thead><tr>
+      <th>边</th><th>父件</th><th>子件</th><th>用量</th><th>槽位</th><th>生效区间</th><th>类型</th><th>批次</th><th>状态</th>
+    </tr></thead><tbody></tbody></table>
+    <details><summary>替代槽位成员</summary>
+      <table id="slotTbl"><thead><tr>
+        <th>成员</th><th>槽位</th><th>子件</th><th>优先级</th><th>生效区间</th><th>批次</th><th>状态</th>
+      </tr></thead><tbody></tbody></table>
+    </details>
+  </section>
+
+  <section>
+    <h2>增量还是重建？（本系统的决策规则，构建日志中可见实际选择）</h2>
+    <ul style="margin:6px 0; padding-left:20px; font-size:13px">
+      <li><b>安全增量</b>：批次只带来成品需求（新“成品+日期”对，或需求数量变化）。需求是加性事实，
+          不影响其他需求对的展开结果 → 只展开这些需求对，其余原样沿用。</li>
+      <li><b>必须重建</b>：结构更正（用量/生效区间/父子关系）或替代优先级变化。数量沿路径连乘、
+          共享子件跨成品聚合，局部打补丁不可靠 → 受影响范围 = 变更父节点的<b>祖先锥</b>
+          （按全部历史边取保守超集）∩ 已有需求。</li>
+      <li><b>局部重建 vs 全量</b>：祖先锥外的需求对原样沿用（partial）；锥覆盖全部需求对或手动指定 → full。</li>
+      <li><b>重叠构建</b>：版本号单调分配，发布是单条带守卫的原子 UPDATE（版本更大且基线批次不更小才生效），
+          晚完成的旧构建被拒绝（stale），已发布版本不会回退。</li>
+      <li><b>读者一致性</b>：读者只读“已发布”这一份快照，快照行不可变 → 不会看到一半新结构一半旧数量。</li>
+      <li><b>环路</b>：只在当前路径上检测并截断（标记“环路截断”），其余路径正常展开，仓库整体可查。</li>
+    </ul>
+  </section>
+</main>
+<script>
+let STATE = null;
+
+const fmt = n => { const v = Math.round(n * 1e6) / 1e6; return Number.isInteger(v) ? String(v) : String(v); };
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), {status: r.status, payload: j});
+  return j;
+}
+
+async function refresh() {
+  STATE = await api('/api/state');
+  renderState();
+}
+
+function renderState() {
+  const s = STATE;
+  // 发布横幅
+  const pub = s.published;
+  document.getElementById('pubBanner').innerHTML = pub
+    ? `已发布快照 <b>v${pub.version}</b>（基线批次 ${pub.base_batch}，模式 ${pub.mode}，${esc(pub.finished_at || '')}）`
+    : '尚未发布任何快照 —— 请接入批次并触发构建';
+  // 成品下拉：需求中出现过的成品 + 全部成品类物料
+  const demanded = [...new Set(s.demands.map(d => d.product))];
+  const finished = s.items.filter(i => i.kind === 'finished').map(i => i.item_id);
+  const opts = [...new Set([...demanded, ...finished])];
+  const sel = document.getElementById('qProduct');
+  const cur = sel.value;
+  sel.innerHTML = opts.map(o => `<option>${esc(o)}</option>`).join('');
+  if (cur && opts.includes(cur)) sel.value = cur;
+  // 批次
+  document.querySelector('#batchTbl tbody').innerHTML = s.batches.map(b => `<tr>
+    <td>${b.batch_id}</td><td>${esc(b.label)}</td><td class="mono">${esc(b.arrived_at)}</td>
+    <td class="num">${b.n_edges}</td><td class="num">${b.n_corrections}</td>
+    <td class="num">${b.n_subs}</td><td class="num">${b.n_demands}</td></tr>`).join('');
+  // 快照
+  document.querySelector('#snapTbl tbody').innerHTML = s.snapshots.map(x => `<tr>
+    <td>#${x.snapshot_id}</td><td>v${x.version}</td>
+    <td class="st-${x.status}">${x.status}</td><td>${x.mode || ''}</td>
+    <td class="num">${x.base_batch}</td>
+    <td class="mono">${esc(x.started_at || '')}</td><td class="mono">${esc(x.finished_at || '')}</td>
+    <td>${x.note && x.note.reasons ? `<a href="javascript:showNote(${x.snapshot_id})">查看</a>` : ''}</td></tr>`).join('');
+  // 结构版本
+  document.querySelector('#edgeTbl tbody').innerHTML = s.edges.map(e => `<tr style="${e.superseded_by ? 'color:#8c959f' : ''}">
+    <td>#${e.edge_id}</td><td>${esc(e.parent)}</td><td>${esc(e.child)}</td>
+    <td class="num">${fmt(e.qty_per)}</td><td>${e.slot ? esc(e.slot) : ''}</td>
+    <td class="mono">${e.eff_from} ~ ${e.eff_to || '∞'}</td><td>${e.kind}</td>
+    <td class="num">${e.batch_id}</td>
+    <td>${e.superseded_by ? '被批次' + e.superseded_by + '取代' : '有效'}</td></tr>`).join('');
+  document.querySelector('#slotTbl tbody').innerHTML = s.slot_members.map(m => `<tr style="${m.superseded_by ? 'color:#8c959f' : ''}">
+    <td>#${m.member_id}</td><td>${esc(m.slot)}</td><td>${esc(m.child)}</td>
+    <td class="num">${m.priority}</td>
+    <td class="mono">${m.eff_from} ~ ${m.eff_to || '∞'}</td><td class="num">${m.batch_id}</td>
+    <td>${m.superseded_by ? '被批次' + m.superseded_by + '取代' : '有效'}</td></tr>`).join('');
+}
+
+function showNote(sid) {
+  const x = STATE.snapshots.find(v => v.snapshot_id === sid);
+  const el = document.getElementById('snapNote');
+  if (!x || !x.note) return;
+  const n = x.note;
+  el.style.display = 'block';
+  el.innerHTML = `<b>快照 #${sid}（v${x.version}，${x.mode || ''}）</b>
+    <ul>${(n.reasons || []).map(r => `<li>${esc(r)}</li>`).join('')}</ul>
+    <div class="muted">展开需求对: ${(n.exploded_pairs || []).join(', ') || '无'}<br>
+    沿用需求对: ${(n.carried_pairs || []).join(', ') || '无'}<br>
+    新展开行 ${n.exploded_rows ?? 0}，沿用行 ${n.carried_rows ?? 0}，发布: ${n.published === undefined ? '—' : (n.published ? '成功' : '被拒绝')}</div>`;
+}
+
+function edgeTip(ids) {
+  if (!STATE) return '';
+  return ids.map(id => {
+    const e = STATE.edges.find(v => v.edge_id === id);
+    return e ? `#${id} ${e.parent}→${e.child} ×${fmt(e.qty_per)} [${e.eff_from}~${e.eff_to || '∞'}] ${e.kind}` : `#${id}`;
+  }).join('\n');
+}
+
+async function doQuery() {
+  const p = document.getElementById('qProduct').value;
+  const d = document.getElementById('qDate').value;
+  const q = document.getElementById('qQty').value || 1;
+  const live = document.getElementById('qLive').checked ? 1 : 0;
+  const errEl = document.getElementById('qErr');
+  errEl.textContent = '';
+  let res;
+  try {
+    res = await api(`/api/explode?product=${encodeURIComponent(p)}&date=${d}&qty=${q}&live=${live}`);
+  } catch (e) {
+    errEl.textContent = e.message;
+    document.querySelector('#totalsTbl tbody').innerHTML = '';
+    document.querySelector('#rowsTbl tbody').innerHTML = '';
+    document.getElementById('qMeta').textContent = '';
+    return;
+  }
+  const m = res.meta;
+  document.getElementById('qMeta').textContent = m.live
+    ? '实时重算（按当前全部知识，未读快照）'
+    : `来自已发布快照 v${m.snapshot_version}（基线批次 ${m.base_batch}）`
+      + (m.scaled ? `；快照需求总量 ${fmt(m.demand_qty)}，已按线性缩放到查询数量` : '');
+  // 汇总
+  const agg = {};
+  for (const r of res.rows) {
+    const a = agg[r.item] = agg[r.item] || {total: 0, paths: 0, cycle: false};
+    a.total += r.required_qty; a.paths += 1; a.cycle = a.cycle || !!r.cycle;
+  }
+  const nameOf = id => (STATE.items.find(i => i.item_id === id) || {}).name || '';
+  document.querySelector('#totalsTbl tbody').innerHTML = Object.keys(agg).sort().map(it => `<tr>
+    <td class="mono">${esc(it)}</td><td>${esc(nameOf(it))}</td>
+    <td class="num">${fmt(agg[it].total)}</td><td class="num">${agg[it].paths}</td>
+    <td>${agg[it].cycle ? '<span class="badge b-cyc">含环路截断(下限)</span>' : ''}</td></tr>`).join('');
+  // 明细
+  document.querySelector('#rowsTbl tbody').innerHTML = res.rows.map(r => {
+    const badges = [];
+    if (r.cycle) badges.push('<span class="badge b-cyc">环路截断</span>');
+    if (r.via_substitute) badges.push('<span class="badge b-sub">替代品</span>');
+    if (r.via_slot) badges.push(`<span class="badge b-slot">${esc(r.via_slot)}</span>`);
+    const chain = r.qty_chain.length ? r.qty_chain.map(fmt).join(' × ') : '—';
+    const edges = r.edge_ids.length ? '#' + r.edge_ids.join(' #') : '—';
+    return `<tr>
+      <td class="pathcell mono" style="padding-left:${8 + r.depth * 16}px">${esc(r.path.replaceAll('/', ' → '))}</td>
+      <td class="num">${chain}</td><td class="num">${fmt(r.required_qty)}</td>
+      <td class="mono" title="${esc(edgeTip(r.edge_ids))}">${edges}</td>
+      <td>${badges.join('')}</td></tr>`;
+  }).join('');
+}
+
+async function doIngest(label) {
+  const msg = document.getElementById('ingestMsg');
+  try {
+    const r = await api('/api/ingest', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify({label})});
+    msg.textContent = `批次 #${r.batch_id} 已入仓：结构+${r.stats.edges} 更正+${r.stats.corrections} 替代+${r.stats.subs} 需求+${r.stats.demands}`;
+  } catch (e) { msg.textContent = '失败：' + e.message; }
+  await refresh();
+}
+
+async function doBuild() {
+  const mode = document.getElementById('bMode').value;
+  const slow = document.getElementById('bSlow').value || 0;
+  const msg = document.getElementById('buildMsg');
+  try {
+    const r = await api('/api/build', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                       body: JSON.stringify({mode, slow: Number(slow)})});
+    msg.textContent = `构建 #${r.snapshot_id} 已启动`;
+  } catch (e) { msg.textContent = '失败：' + e.message; }
+  setTimeout(refresh, 300);
+}
+
+async function doAbort() {
+  const building = (STATE.snapshots || []).find(x => x.status === 'building');
+  const msg = document.getElementById('buildMsg');
+  if (!building) { msg.textContent = '当前没有进行中的构建'; return; }
+  const r = await api('/api/abort', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify({snapshot_id: building.snapshot_id})});
+  msg.textContent = r.ok ? `已请求中止构建 #${building.snapshot_id}` : '该构建已结束';
+  setTimeout(refresh, 300);
+}
+
+async function doReset() {
+  if (!confirm('确定清空仓库并重置演示？')) return;
+  await api('/api/reset', {method: 'POST'});
+  await refresh();
+}
+
+// 样例批次按钮
+(async function init() {
+  await refresh();
+  const labels = {b1: 'b1 基础结构+需求', b2: 'b2 混合批次(更正+优先级+需求)', b3: 'b3 纯需求',
+                  b4: 'b4 前向更正', stress: 'stress 压测结构'};
+  document.getElementById('ingestBtns').innerHTML = STATE.sample_labels
+    .map(l => `<button onclick="doIngest('${l}')">${esc(labels[l] || l)}</button>`).join('');
+  setInterval(async () => {
+    if ((STATE.snapshots || []).some(x => x.status === 'building')) await refresh();
+  }, 800);
+})();
+</script>
+</body>
+</html>
